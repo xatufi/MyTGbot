@@ -12,7 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # --- НАСТРОЙКИ ---
 API_TOKEN = '8534127751:AAGPOa9Fy4zm64iv7JkM8ohY6ennGPC-SGE'
 ADMIN_PASSWORD = '090180'
-OWNER_PASSWORD = '0901805242' 
+OWNER_PASSWORD = '20124252' 
 DATA_FILE = 'data.json'
 # -----------------
 
@@ -24,9 +24,11 @@ def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-                return json.loads(content) if content else {"users": {}, "admin_id": None, "owner_id": None}
-        except: return {"users": {}, "admin_id": None, "owner_id": None}
+                c = f.read().strip()
+                data = json.loads(c) if c else {}
+                if "users" not in data: data["users"] = {}
+                return data
+        except: pass
     return {"users": {}, "admin_id": None, "owner_id": None}
 
 def save_data(data):
@@ -52,18 +54,6 @@ def main_kb():
     kb.adjust(2)
     return kb.as_markup(resize_keyboard=True)
 
-def cancel_kb():
-    return ReplyKeyboardBuilder().button(text="❌ Отмена").as_markup(resize_keyboard=True)
-
-async def notify_owner(text, message_to_copy=None):
-    o_id = db.get("owner_id")
-    if o_id:
-        try:
-            await bot.send_message(o_id, f"👁 [ЛОГ]: {text}")
-            if message_to_copy:
-                await message_to_copy.copy_to(o_id)
-        except: pass
-
 @dp.message(Command("start"))
 @dp.message(F.text == "❌ Отмена")
 @dp.message(F.text == "🔄 Сбросить роль")
@@ -71,65 +61,66 @@ async def start(message: types.Message, state: FSMContext):
     await state.clear()
     uid = str(message.from_user.id)
     if message.text == "🔄 Сбросить роль":
-        if uid in db["users"]: del db["users"][uid]
+        db["users"].pop(uid, None)
         if db.get("admin_id") == message.from_user.id: db["admin_id"] = None
         if db.get("owner_id") == message.from_user.id: db["owner_id"] = None
         save_data(db)
         await message.answer("Роль сброшена.")
-    await message.answer("Кто ты в системе?", reply_markup=main_kb())
+    await message.answer("Выберите роль:", reply_markup=main_kb())
 
 @dp.message(F.text.in_({"Я Глава", "Я Создатель"}))
 async def ask_password(message: types.Message, state: FSMContext):
-    await message.answer(f"Введите пароль:", reply_markup=cancel_kb())
-    await state.update_data(logging_as=message.text)
+    await state.update_data(role_target=message.text)
+    await message.answer(f"Введите пароль для {message.text}:", 
+                         reply_markup=ReplyKeyboardBuilder().button(text="❌ Отмена").as_markup(resize_keyboard=True))
     await state.set_state(Form.wait_password)
 
 @dp.message(Form.wait_password)
 async def check_password(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    role = data.get('logging_as')
+    target = data.get("role_target")
     uid = message.from_user.id
+    uid_s = str(uid)
 
-    if role == "Я Создатель" and message.text == OWNER_PASSWORD:
+    if target == "Я Создатель" and message.text == OWNER_PASSWORD:
         db["owner_id"] = uid
-        db["users"][str(uid)] = {'username': message.from_user.username or "Boss", 'score': db["users"].get(str(uid), {}).get('score', 0)}
+        if uid_s not in db["users"]:
+            db["users"][uid_s] = {"username": message.from_user.username or "Boss", "score": 0}
         save_data(db)
         await state.clear()
         kb = ReplyKeyboardBuilder().button(text="Дать задание").button(text="Сдать работу").button(text="🏆 Таблица лидеров").as_markup(resize_keyboard=True)
-        await message.answer("Добро пожаловать, Создатель!", reply_markup=kb)
-    elif role == "Я Глава" and message.text == ADMIN_PASSWORD:
+        await message.answer("✅ Пароль верный! Вы Создатель.", reply_markup=kb)
+        
+    elif target == "Я Глава" and message.text == ADMIN_PASSWORD:
         db["admin_id"] = uid
         save_data(db)
         await state.clear()
         kb = ReplyKeyboardBuilder().button(text="Дать задание").button(text="🏆 Таблица лидеров").as_markup(resize_keyboard=True)
-        await message.answer("Доступ Главы разрешен.", reply_markup=kb)
+        await message.answer("✅ Пароль верный! Вы Глава.", reply_markup=kb)
     else:
-        await message.answer("Неверно!")
+        await message.answer("❌ Неверный пароль! Попробуйте еще раз или нажмите /start")
 
 @dp.message(F.text == "Я Исполнитель")
 async def worker_login(message: types.Message):
     uid = str(message.from_user.id)
-    # Исправленная строка 110:
-    old_score = db["users"].get(uid, {}).get('score', 0)
-    db["users"][uid] = {'username': message.from_user.username or "Worker", 'score': old_score}
+    if uid not in db["users"]:
+        db["users"][uid] = {"username": message.from_user.username or "Worker", "score": 0}
     save_data(db)
-    await message.answer("Вы вошли как исполнитель.")
-    await notify_owner(f"Новый исполнитель: @{message.from_user.username}")
+    await message.answer("✅ Вы зарегистрированы как исполнитель.")
 
 @dp.message(F.text == "🏆 Таблица лидеров")
 async def show_leaderboard(message: types.Message):
-    if not db["users"]:
-        return await message.answer("Список пуст.")
-    sorted_users = sorted(db["users"].values(), key=lambda x: x.get('score', 0), reverse=True)
+    if not db["users"]: return await message.answer("Список пуст.")
+    sorted_u = sorted(db["users"].values(), key=lambda x: x.get('score', 0), reverse=True)
     text = "🏆 **Лидеры:**\n\n"
-    for i, user in enumerate(sorted_users, 1):
-        text += f"{i}. @{user['username']} — {user.get('score', 0)}\n"
+    for i, u in enumerate(sorted_u, 1):
+        text += f"{i}. @{u.get('username')} — {u.get('score', 0)}\n"
     await message.answer(text, parse_mode="Markdown")
 
 @dp.message(F.text == "Дать задание")
 async def task_start(message: types.Message, state: FSMContext):
     if message.from_user.id not in [db.get("admin_id"), db.get("owner_id")]: return
-    await message.answer("Username исполнителя (без @):", reply_markup=cancel_kb())
+    await message.answer("Введите username (без @):")
     await state.set_state(Form.wait_task_username)
 
 @dp.message(Form.wait_task_username)
@@ -147,53 +138,40 @@ async def task_text(message: types.Message, state: FSMContext):
 @dp.message(Form.wait_task_deadline)
 async def task_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
-    raw_date = message.text.replace("—", "-").strip()
     try:
-        deadline_dt = datetime.strptime(raw_date, "%Y-%m-%d %H:%M")
-    except:
-        return await message.answer("Ошибка! Пример: 2025-01-01 12:00")
-
-    target_id = next((uid for uid, info in db["users"].items() if info['username'].lower() == data['target']), None)
-    if target_id:
-        kb = ReplyKeyboardBuilder().button(text="Сдать работу").as_markup(resize_keyboard=True)
-        await bot.send_message(int(target_id), f"📥 ЗАДАНИЕ: {data['txt']}\n⏰ Срок: {raw_date}", reply_markup=kb)
-        await notify_owner(f"Выдано задание для @{data['target']}: {data['txt']}")
-
-        remind_m = [120, 60, 30]
-        for m in remind_m:
-            rem_t = deadline_dt - timedelta(minutes=m)
-            if rem_t > datetime.now():
-                scheduler.add_job(bot.send_message, 'date', run_date=rem_t, args=[int(target_id), f"⏰ До дедлайна {m} мин!"])
-        
-        await message.answer("Задание отправлено!", reply_markup=main_kb())
-    else:
-        await message.answer("Исполнитель не найден.")
+        dt = datetime.strptime(message.text.replace("—", "-").strip(), "%Y-%m-%d %H:%M")
+        target_id = next((u_id for u_id, info in db["users"].items() if info.get('username','').lower() == data['target']), None)
+        if target_id:
+            kb = ReplyKeyboardBuilder().button(text="Сдать работу").as_markup(resize_keyboard=True)
+            await bot.send_message(int(target_id), f"📥 ЗАДАНИЕ: {data['txt']}\n⏰ Срок: {message.text}", reply_markup=kb)
+            for m in:
+                rem_t = dt - timedelta(minutes=m)
+                if rem_t > datetime.now():
+                    scheduler.add_job(bot.send_message, 'date', run_date=rem_t, args=[int(target_id), f"⏰ До дедлайна {m} мин!"])
+            await message.answer("✅ Задание отправлено!")
+        else: await message.answer("Исполнитель не найден.")
+    except: await message.answer("Ошибка даты! Пример: 2025-01-01 12:00")
     await state.clear()
 
 @dp.message(F.text == "Сдать работу")
 async def report_start(message: types.Message, state: FSMContext):
-    await message.answer("Пришлите отчет:", reply_markup=cancel_kb())
+    await message.answer("Пришлите отчет:")
     await state.set_state(Form.wait_report)
 
 @dp.message(Form.wait_report)
 async def get_report(message: types.Message, state: FSMContext):
     uid = str(message.from_user.id)
     if uid in db["users"]:
-        db["users"][uid]['score'] += 1
+        db["users"][uid]['score'] = db["users"][uid].get('score', 0) + 1
         save_data(db)
-    
     header = f"✅ ОТЧЕТ от @{message.from_user.username}:"
-    if db.get("admin_id"):
-        try:
-            await bot.send_message(db["admin_id"], header)
-            await message.copy_to(db["admin_id"])
-        except: pass
-    
-    o_id = db.get("owner_id")
-    if o_id and message.from_user.id != o_id:
-        await notify_owner(header, message)
-        
-    await message.answer("Работа сдана!", reply_markup=main_kb())
+    for target in [db.get("admin_id"), db.get("owner_id")]:
+        if target and target != message.from_user.id:
+            try:
+                await bot.send_message(target, header)
+                await message.copy_to(target)
+            except: pass
+    await message.answer("✅ Отправлено!", reply_markup=main_kb())
     await state.clear()
 
 async def main():
@@ -202,3 +180,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+        
