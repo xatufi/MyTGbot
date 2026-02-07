@@ -24,7 +24,8 @@ def load_data():
     if os.path.exists(DATA_FILE):
         try:
             with open(DATA_FILE, 'r', encoding='utf-8') as f:
-                return json.load(f)
+                content = f.read().strip()
+                return json.loads(content) if content else {"users": {}, "admin_id": None, "owner_id": None}
         except: return {"users": {}, "admin_id": None, "owner_id": None}
     return {"users": {}, "admin_id": None, "owner_id": None}
 
@@ -55,11 +56,12 @@ def cancel_kb():
     return ReplyKeyboardBuilder().button(text="❌ Отмена").as_markup(resize_keyboard=True)
 
 async def notify_owner(text, message_to_copy=None):
-    if db.get("owner_id"):
+    o_id = db.get("owner_id")
+    if o_id:
         try:
-            await bot.send_message(db["owner_id"], f"👁 [ЛОГ]: {text}")
+            await bot.send_message(o_id, f"👁 [ЛОГ]: {text}")
             if message_to_copy:
-                await message_to_copy.copy_to(db["owner_id"])
+                await message_to_copy.copy_to(o_id)
         except: pass
 
 @dp.message(Command("start"))
@@ -107,7 +109,9 @@ async def check_password(message: types.Message, state: FSMContext):
 @dp.message(F.text == "Я Исполнитель")
 async def worker_login(message: types.Message):
     uid = str(message.from_user.id)
-    db["users"][uid] = {'username': message.from_user.username or "Worker", 'score': db["users"].get(uid, {}).get('score', 0)}
+    # Исправленная строка 110:
+    old_score = db["users"].get(uid, {}).get('score', 0)
+    db["users"][uid] = {'username': message.from_user.username or "Worker", 'score': old_score}
     save_data(db)
     await message.answer("Вы вошли как исполнитель.")
     await notify_owner(f"Новый исполнитель: @{message.from_user.username}")
@@ -155,9 +159,8 @@ async def task_finish(message: types.Message, state: FSMContext):
         await bot.send_message(int(target_id), f"📥 ЗАДАНИЕ: {data['txt']}\n⏰ Срок: {raw_date}", reply_markup=kb)
         await notify_owner(f"Выдано задание для @{data['target']}: {data['txt']}")
 
-        # ИСПРАВЛЕННЫЙ БЛОК НАПОМИНАНИЙ
-        remind_minutes = [120, 60, 30]
-        for m in remind_minutes:
+        remind_m = [120, 60, 30]
+        for m in remind_m:
             rem_t = deadline_dt - timedelta(minutes=m)
             if rem_t > datetime.now():
                 scheduler.add_job(bot.send_message, 'date', run_date=rem_t, args=[int(target_id), f"⏰ До дедлайна {m} мин!"])
@@ -185,7 +188,9 @@ async def get_report(message: types.Message, state: FSMContext):
             await bot.send_message(db["admin_id"], header)
             await message.copy_to(db["admin_id"])
         except: pass
-    if db.get("owner_id") and message.from_user.id != db["owner_id"]:
+    
+    o_id = db.get("owner_id")
+    if o_id and message.from_user.id != o_id:
         await notify_owner(header, message)
         
     await message.answer("Работа сдана!", reply_markup=main_kb())
@@ -197,4 +202,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
