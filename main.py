@@ -12,7 +12,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 # --- НАСТРОЙКИ ---
 API_TOKEN = '8534127751:AAGPOa9Fy4zm64iv7JkM8ohY6ennGPC-SGE'
 ADMIN_PASSWORD = '090180'
-OWNER_PASSWORD = '20124252' 
+OWNER_PASSWORD = '0901805242' # Твой новый пароль
 DATA_FILE = 'data.json'
 # -----------------
 
@@ -139,18 +139,26 @@ async def task_text(message: types.Message, state: FSMContext):
 async def task_finish(message: types.Message, state: FSMContext):
     data = await state.get_data()
     try:
-        dt = datetime.strptime(message.text.replace("—", "-").strip(), "%Y-%m-%d %H:%M")
+        clean_date = message.text.replace("—", "-").strip()
+        dt = datetime.strptime(clean_date, "%Y-%m-%d %H:%M")
         target_id = next((u_id for u_id, info in db["users"].items() if info.get('username','').lower() == data['target']), None)
+        
         if target_id:
             kb = ReplyKeyboardBuilder().button(text="Сдать работу").as_markup(resize_keyboard=True)
-            await bot.send_message(int(target_id), f"📥 ЗАДАНИЕ: {data['txt']}\n⏰ Срок: {message.text}", reply_markup=kb)
-            for m in:
+            await bot.send_message(int(target_id), f"📥 ЗАДАНИЕ: {data['txt']}\n⏰ Срок: {clean_date}", reply_markup=kb)
+            
+            # ИСПРАВЛЕННЫЙ ЦИКЛ НАПОМИНАНИЙ
+            minutes_list =
+            for m in minutes_list:
                 rem_t = dt - timedelta(minutes=m)
                 if rem_t > datetime.now():
                     scheduler.add_job(bot.send_message, 'date', run_date=rem_t, args=[int(target_id), f"⏰ До дедлайна {m} мин!"])
+            
             await message.answer("✅ Задание отправлено!")
-        else: await message.answer("Исполнитель не найден.")
-    except: await message.answer("Ошибка даты! Пример: 2025-01-01 12:00")
+        else:
+            await message.answer("Исполнитель не найден.")
+    except:
+        await message.answer("Ошибка даты! Пример: 2025-01-01 12:00")
     await state.clear()
 
 @dp.message(F.text == "Сдать работу")
@@ -164,13 +172,19 @@ async def get_report(message: types.Message, state: FSMContext):
     if uid in db["users"]:
         db["users"][uid]['score'] = db["users"][uid].get('score', 0) + 1
         save_data(db)
+    
     header = f"✅ ОТЧЕТ от @{message.from_user.username}:"
-    for target in [db.get("admin_id"), db.get("owner_id")]:
-        if target and target != message.from_user.id:
+    targets = []
+    if db.get("admin_id"): targets.append(db["admin_id"])
+    if db.get("owner_id"): targets.append(db["owner_id"])
+    
+    for target in set(targets): # set чтобы не слать дважды если админ и овнер одно лицо
+        if target != message.from_user.id:
             try:
                 await bot.send_message(target, header)
                 await message.copy_to(target)
             except: pass
+            
     await message.answer("✅ Отправлено!", reply_markup=main_kb())
     await state.clear()
 
@@ -180,4 +194,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-        
+    
