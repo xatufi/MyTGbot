@@ -22,8 +22,7 @@ scheduler = AsyncIOScheduler()
 
 def load_data():
     default = {"users": {}, "admin_id": None, "owner_id": None, "tasks": []}
-    if not os.path.exists(DATA_FILE):
-        return default
+    if not os.path.exists(DATA_FILE): return default
     try:
         with open(DATA_FILE, 'r', encoding='utf-8') as f:
             content = f.read().strip()
@@ -32,8 +31,7 @@ def load_data():
             for key in default:
                 if key not in data: data[key] = default[key]
             return data
-    except Exception:
-        return default
+    except Exception: return default
 
 def save_data(data):
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
@@ -85,7 +83,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         if db.get("admin_id") == uid: db["admin_id"] = None
         if db.get("owner_id") == uid: db["owner_id"] = None
         save_data(db)
-        await message.answer("Ваша роль сброшена.")
+        await message.answer("Роль сброшена.")
     await message.answer("Выберите действие:", reply_markup=main_kb(uid))
 
 @dp.message(F.text.in_({"Я Глава", "Я Создатель"}))
@@ -96,34 +94,36 @@ async def role_pass(message: types.Message, state: FSMContext):
 
 @dp.message(Form.wait_password)
 async def check_pass(message: types.Message, state: FSMContext):
-    state_data = await state.get_data()
-    role = state_data.get("role")
-    uid = message.from_user.id
-    u_str = str(uid)
+    s_data = await state.get_data()
+    role = s_data.get("role")
     correct_pwd = OWNER_PASSWORD if role == "Я Создатель" else ADMIN_PASSWORD
     
     if message.text == correct_pwd:
+        uid = message.from_user.id
         if role == "Я Создатель": db["owner_id"] = uid
         else: db["admin_id"] = uid
+        
+        u_str = str(uid)
         if u_str not in db["users"]:
             db["users"][u_str] = {"username": message.from_user.username or "Boss", "score": 0}
+        
         save_data(db)
         await state.clear()
         await message.answer(f"✅ Доступ {role} разрешен!", reply_markup=main_kb(uid))
     else:
-        await message.answer("❌ Неверно.")
+        await message.answer("❌ Неверный пароль.")
 
 @dp.message(F.text == "Я Исполнитель")
 async def worker_reg(message: types.Message):
     u_str = str(message.from_user.id)
     db["users"][u_str] = {"username": message.from_user.username or "Worker", "score": 0}
     save_data(db)
-    await message.answer("✅ Вы в списке исполнителей.", reply_markup=main_kb(message.from_user.id))
+    await message.answer("✅ Вы зарегистрированы!", reply_markup=main_kb(message.from_user.id))
 
 @dp.message(F.text == "Дать задание")
 async def task_init(message: types.Message, state: FSMContext):
     if message.from_user.id not in [db.get("admin_id"), db.get("owner_id")]: return
-    await message.answer("Username исполнителя (без @):", reply_markup=ReplyKeyboardBuilder().button(text="❌ Отмена").as_markup(resize_keyboard=True))
+    await message.answer("Username (без @):", reply_markup=ReplyKeyboardBuilder().button(text="❌ Отмена").as_markup(resize_keyboard=True))
     await state.set_state(Form.wait_task_username)
 
 @dp.message(Form.wait_task_username)
@@ -134,8 +134,8 @@ async def task_user(message: types.Message, state: FSMContext):
 
 @dp.message(Form.wait_task_content)
 async def task_content(message: types.Message, state: FSMContext):
-    task_desc = message.text or message.caption or "Задание без описания"
-    await state.update_data(msg_id=message.message_id, task_text=task_desc)
+    desc = message.text or message.caption or "Задание"
+    await state.update_data(msg_id=message.message_id, task_text=desc)
     await message.answer("Дедлайн (ГГГГ-ММ-ДД ЧЧ:ММ):")
     await state.set_state(Form.wait_task_deadline)
 
@@ -145,7 +145,7 @@ async def task_finish(message: types.Message, state: FSMContext):
     try:
         clean_date = message.text.replace("—", "-").strip()
         dt = datetime.strptime(clean_date, "%Y-%m-%d %H:%M")
-        target_uid = next((uid for uid, info in db.get("users", {}).items() if info.get("username", "").lower() == data["target"]), None)
+        target_uid = next((uid for uid, info in db["users"].items() if info.get("username", "").lower() == data["target"]), None)
         
         if target_uid:
             t_id = len(db["tasks"])
@@ -155,11 +155,11 @@ async def task_finish(message: types.Message, state: FSMContext):
                 "desc": data["task_text"][:30] + "..."
             })
             save_data(db)
-            await bot.send_message(int(target_uid), f"📥 **ВАМ ПРИШЛО ЗАДАНИЕ №{t_id}!**\nСрок: {clean_date}")
+            await bot.send_message(int(target_uid), f"📥 **НОВОЕ ЗАДАНИЕ №{t_id}!**\nСрок: {clean_date}")
             for m in:
                 rem_t = dt - timedelta(minutes=m)
                 if rem_t > datetime.now():
-                    scheduler.add_job(bot.send_message, 'date', run_date=rem_t, args=[int(target_uid), f"⏰ До дедлайна задания №{t_id} осталось {m} мин!"])
+                    scheduler.add_job(bot.send_message, 'date', run_date=rem_t, args=[int(target_uid), f"⏰ Дедлайн №{t_id} через {m} мин!"])
             await message.answer("✅ Отправлено.", reply_markup=main_kb(message.from_user.id))
         else: await message.answer("❌ Исполнитель не найден.")
     except: await message.answer("❌ Ошибка даты. Пример: 2025-01-01 12:00")
@@ -168,29 +168,30 @@ async def task_finish(message: types.Message, state: FSMContext):
 @dp.message(F.text == "📋 Мои задания")
 async def my_tasks(message: types.Message):
     u_str = str(message.from_user.id)
-    u_tasks = [t for t in db.get("tasks", []) if t["worker"] == u_str and t["status"] == "active"]
-    if not u_tasks: return await message.answer("У вас нет активных заданий.")
+    u_tasks = [t for t in db["tasks"] if t["worker"] == u_str and t["status"] == "active"]
+    if not u_tasks: return await message.answer("Активных заданий нет.")
     for t in u_tasks:
         ikb = InlineKeyboardBuilder().button(text="❓ Спросить", callback_data=f"ask_{t['id']}").as_markup()
         await bot.copy_message(message.chat.id, t["boss_id"], t["content_msg"])
-        await message.answer(f"🆔 Задание №{t['id']}\n⏰ Дедлайн: {t['deadline']}", reply_markup=ikb)
+        await message.answer(f"🆔 Задание №{t['id']}\n⏰ Срок: {t['deadline']}", reply_markup=ikb)
 
 @dp.message(F.text == "✅ Сдать работу")
 async def report_select(message: types.Message):
     u_str = str(message.from_user.id)
-    u_tasks = [t for t in db.get("tasks", []) if t["worker"] == u_str and t["status"] == "active"]
-    if not u_tasks: return await message.answer("Нет активных заданий.")
+    u_tasks = [t for t in db["tasks"] if t["worker"] == u_str and t["status"] == "active"]
+    if not u_tasks: return await message.answer("Нет заданий.")
     ikb = InlineKeyboardBuilder()
     for t in u_tasks:
         ikb.button(text=f"Задание №{t['id']}", callback_data=f"submit_{t['id']}")
     ikb.adjust(1)
-    await message.answer("Выберите задание для сдачи:", reply_markup=ikb.as_markup())
+    await message.answer("Что сдаем?", reply_markup=ikb.as_markup())
 
 @dp.callback_query(F.data.startswith("submit_"))
 async def report_init(callback: types.CallbackQuery, state: FSMContext):
-    t_id = int(callback.data.split("_")[1]) # Исправлен индекс [1]
+    t_id_str = callback.data.split("_")
+    t_id = int(t_id_str)
     await state.update_data(submit_task_id=t_id)
-    await callback.message.answer(f"Пришлите отчет по заданию №{t_id}:")
+    await callback.message.answer(f"Пришлите отчет по №{t_id}:")
     await state.set_state(Form.wait_report)
 
 @dp.message(Form.wait_report)
@@ -201,9 +202,9 @@ async def report_done(message: types.Message, state: FSMContext):
     task = next((t for t in db["tasks"] if t["id"] == t_id), None)
     if task:
         task["status"] = "completed"
-        db["users"][u_str]["score"] = db["users"].get(u_str, {}).get("score", 0) + 1
+        db["users"][u_str]["score"] += 1
         save_data(db)
-        info = f"✅ **ОТЧЕТ ПО ЗАДАНИЮ №{t_id}**\nОт: @{message.from_user.username}\nСуть: {task['desc']}"
+        info = f"✅ **ОТЧЕТ №{t_id}**\nОт: @{message.from_user.username}\nСуть: {task['desc']}"
         targets = set(filter(None, [db.get("admin_id"), db.get("owner_id")]))
         for r_id in targets:
             if r_id != message.from_user.id:
@@ -211,14 +212,15 @@ async def report_done(message: types.Message, state: FSMContext):
                     await bot.send_message(r_id, info)
                     await message.copy_to(r_id)
                 except: pass
-        await message.answer("✅ Отправлено и удалено из списка!", reply_markup=main_kb(message.from_user.id))
+        await message.answer("✅ Сдано!", reply_markup=main_kb(message.from_user.id))
     await state.clear()
 
 @dp.callback_query(F.data.startswith("ask_"))
 async def ask_click(callback: types.CallbackQuery, state: FSMContext):
-    t_id = int(callback.data.split("_")[1]) # Исправлен индекс [1]
+    t_id_str = callback.data.split("_")
+    t_id = int(t_id_str)
     await state.update_data(ask_task_id=t_id)
-    await callback.message.answer(f"Ваш вопрос по заданию №{t_id}:")
+    await callback.message.answer(f"Вопрос по №{t_id}:")
     await state.set_state(Form.wait_question)
 
 @dp.message(Form.wait_question)
@@ -226,11 +228,9 @@ async def send_q(message: types.Message, state: FSMContext):
     data = await state.get_data()
     t_id = data['ask_task_id']
     task = next((t for t in db["tasks"] if t["id"] == t_id), None)
-    desc = task['desc'] if task else "..."
-    q_text = f"❓ **ВОПРОС (Задание №{t_id})**\nОт: @{message.from_user.username}\nСуть задания: {desc}\n\nТекст: {message.text}"
+    q_text = f"❓ **ВОПРОС (№{t_id})**\nОт: @{message.from_user.username}\nСуть: {task['desc'] if task else ''}\n\nТекст: {message.text}"
     ikb = InlineKeyboardBuilder().button(text="✍️ Ответить", callback_data=f"reply_{message.from_user.id}").as_markup()
-    targets = set(filter(None, [db.get("admin_id"), db.get("owner_id")]))
-    for target in targets:
+    for target in filter(None, [db.get("admin_id"), db.get("owner_id")]):
         try: await bot.send_message(target, q_text, reply_markup=ikb)
         except: pass
     await message.answer("✅ Отправлено.")
@@ -238,9 +238,10 @@ async def send_q(message: types.Message, state: FSMContext):
 
 @dp.callback_query(F.data.startswith("reply_"))
 async def reply_click(callback: types.CallbackQuery, state: FSMContext):
-    target_id = int(callback.data.split("_")[1]) # Исправлен индекс [1]
+    target_id_str = callback.data.split("_")
+    target_id = int(target_id_str)
     await state.update_data(reply_to=target_id)
-    await callback.message.answer("Введите ответ исполнителю:")
+    await callback.message.answer("Ваш ответ:")
     await state.set_state(Form.wait_answer)
 
 @dp.message(Form.wait_answer)
@@ -248,27 +249,26 @@ async def send_a(message: types.Message, state: FSMContext):
     data = await state.get_data()
     try:
         await bot.send_message(data['reply_to'], f"✉️ **ОТВЕТ:**\n\n{message.text}")
-        await message.answer("✅ Ответ доставлен.")
-    except: await message.answer("❌ Ошибка доставки.")
+        await message.answer("✅ Доставлено.")
+    except: await message.answer("❌ Ошибка.")
     await state.clear()
 
 @dp.message(F.text == "🏆 Таблица лидеров")
 async def leaderboard(message: types.Message):
-    usrs = db.get("users", {})
-    if not usrs: return await message.answer("Пусто.")
-    sorted_u = sorted(usrs.values(), key=lambda x: x.get('score', 0), reverse=True)
+    if not db["users"]: return await message.answer("Пусто.")
+    sorted_u = sorted(db["users"].values(), key=lambda x: x.get('score', 0), reverse=True)
     text = "🏆 **Рейтинг:**\n\n" + "\n".join([f"{i}. @{u['username']} — {u['score']}" for i, u in enumerate(sorted_u, 1)])
     await message.answer(text)
 
 @dp.message(F.text == "📢 Рассылка")
-async def broad_send(message: types.Message, state: FSMContext):
+async def broadcast(message: types.Message, state: FSMContext):
     if message.from_user.id != db.get("owner_id"): return
-    await message.answer("Сообщение для рассылки всем:")
+    await message.answer("Сообщение для всех:")
     await state.set_state(Form.wait_broadcast)
 
 @dp.message(Form.wait_broadcast)
 async def do_broad(message: types.Message, state: FSMContext):
-    for u_id in db.get("users", {}).keys():
+    for u_id in db["users"].keys():
         try: await message.copy_to(int(u_id))
         except: pass
     await state.clear()
@@ -280,4 +280,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-    
+            
